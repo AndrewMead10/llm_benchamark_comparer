@@ -14,13 +14,13 @@ function App() {
               </span>
             </div>
             <nav className="flex space-x-8">
-              <a href="#" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">
+              <a href="/" className="text-gray-900 border-b-2 border-primary-600 px-3 py-2 text-sm font-medium">
                 Dashboard
               </a>
-              <a href="#" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">
+              <a href="/documentation" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">
                 Documentation
               </a>
-              <a href="#" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">
+              <a href="/about" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">
                 About
               </a>
             </nav>
