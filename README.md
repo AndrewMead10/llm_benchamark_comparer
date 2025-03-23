@@ -2,6 +2,18 @@
 
 A modern web application for corporations to find the best AI models for their specific needs. This tool helps businesses compare different AI models based on cost, speed, accuracy, and other relevant factors.
 
+## Architecture
+
+The application uses Maestro Model with OpenRouter for LLM benchmarking to evaluate model performance across different capabilities:
+
+![LLM Benchmarking Architecture](/public/images/diagram.png)
+
+This architecture allows us to:
+- Route prompts through various LLM providers (GPT-4o, Claude, Llama-2)
+- Evaluate performance on different tasks like language comprehension and logical reasoning
+- Aggregate responses for comparative analysis
+- Calculate metrics including accuracy, speed, and cost
+
 ## Features
 
 - **Intuitive UI**: Clean, modern interface for easy navigation
