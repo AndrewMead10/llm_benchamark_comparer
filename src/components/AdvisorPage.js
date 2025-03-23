@@ -185,106 +185,123 @@ const AdvisorPage = () => {
     
     // Split the prompt text into individual prompts
     const promptArray = testPrompt.split('\n\n').filter(p => p.trim());
-    const allResults = [];
     
-    // For each prompt, test it against all selected models
-    for (let promptIndex = 0; promptIndex < promptArray.length; promptIndex++) {
-      const currentPrompt = promptArray[promptIndex];
-      const promptResults = [];
-      
-      // Test each selected model with the current prompt
-      for (const model of selectedModels) {
-        try {
-          console.log(`Testing model: ${model.name} with prompt ${promptIndex + 1}`);
-          
-          // Make API call to OpenRouter
-          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer": window.location.origin,
-              "X-Title": "AI Model Advisor"
-            },
-            body: JSON.stringify({
-              model: model.modelId,
-              messages: [
-                { role: "user", content: currentPrompt }
-              ],
-              max_tokens: 1024,
-              temperature: 0.7,
-            }),
-          });
-          
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(`Error from ${model.name}: ${errorData.error?.message || 'Unknown error'}`);
+    // Function to call a model for a specific prompt
+    const callModel = async (model, prompt, promptIndex) => {
+      try {
+        console.log(`Testing model: ${model.name} with prompt ${promptIndex + 1}`);
+        
+        // Make API call to OpenRouter
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": window.location.origin,
+            "X-Title": "AI Model Advisor"
+          },
+          body: JSON.stringify({
+            model: model.modelId,
+            messages: [
+              { role: "user", content: prompt }
+            ],
+            max_tokens: 1024,
+            temperature: 0.7,
+          }),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Error from ${model.name}: ${errorData.error?.message || 'Unknown error'}`);
+        }
+        
+        const data = await response.json();
+        const output = data.choices[0].message.content;
+        
+        // Add metrics
+        const metrics = {
+          tokensUsed: data.usage.total_tokens,
+          responseTime: data.response_ms / 1000, // Convert to seconds
+          cost: data.usage.cost,
+        };
+        
+        return {
+          model,
+          output,
+          metrics,
+          prompt,
+          promptIndex: promptIndex + 1
+        };
+      } catch (error) {
+        console.error(`Error testing model ${model.name} with prompt ${promptIndex + 1}:`, error);
+        setApiError(prevError => {
+          if (prevError) {
+            return `${prevError}; ${error.message}`;
           }
-          
-          const data = await response.json();
-          const output = data.choices[0].message.content;
-          
-          // Add metrics
-          const metrics = {
-            tokensUsed: data.usage.total_tokens,
-            responseTime: data.response_ms / 1000, // Convert to seconds
-            cost: data.usage.cost,
-          };
-          
-          promptResults.push({
-            model,
-            output,
-            metrics,
-            prompt: currentPrompt,
-            promptIndex: promptIndex + 1
-          });
-        } catch (error) {
-          console.error(`Error testing model ${model.name} with prompt ${promptIndex + 1}:`, error);
-          promptResults.push({
-            model,
-            output: `Error: ${error.message}`,
-            metrics: {
-              tokensUsed: 0,
-              responseTime: 0,
-              cost: 0,
-            },
-            prompt: currentPrompt,
-            promptIndex: promptIndex + 1
-          });
-          setApiError(prevError => {
-            if (prevError) {
-              return `${prevError}; ${error.message}`;
-            }
-            return error.message;
-          });
-        }
+          return error.message;
+        });
+        
+        return {
+          model,
+          output: `Error: ${error.message}`,
+          metrics: {
+            tokensUsed: 0,
+            responseTime: 0,
+            cost: 0,
+          },
+          prompt,
+          promptIndex: promptIndex + 1
+        };
+      }
+    };
+    
+    try {
+      // Create an array of all model-prompt combinations
+      const allPromises = [];
+      
+      // Generate all combinations of models and prompts
+      for (let promptIndex = 0; promptIndex < promptArray.length; promptIndex++) {
+        const currentPrompt = promptArray[promptIndex];
+        
+        // Add promises for all models for this prompt
+        selectedModels.forEach(model => {
+          allPromises.push(callModel(model, currentPrompt, promptIndex));
+        });
       }
       
-      // Add results from this prompt to all results
-      allResults.push(...promptResults);
-    }
-    
-    setResults(allResults);
-    setLoading(false);
-    
-    // If we have results, evaluate them using Maestro
-    // Group results by prompt for evaluation
-    if (allResults.length > 0 && allResults.some(r => !r.output.startsWith('Error'))) {
-      // Group by promptIndex
-      const resultsByPrompt = {};
-      allResults.forEach(result => {
-        if (!resultsByPrompt[result.promptIndex]) {
-          resultsByPrompt[result.promptIndex] = [];
-        }
-        resultsByPrompt[result.promptIndex].push(result);
-      });
+      // Run all API calls in parallel
+      const allResults = await Promise.all(allPromises);
       
-      // Evaluate each group of results
-      for (const [promptIndex, promptResults] of Object.entries(resultsByPrompt)) {
-        if (promptResults.length > 0) {
-          await handleEvaluateResults(promptResults[0].prompt, promptResults);
+      setResults(allResults);
+      
+      // If we have results, evaluate them using Maestro
+      if (allResults.length > 0 && allResults.some(r => !r.output.startsWith('Error'))) {
+        // Group by promptIndex
+        const resultsByPrompt = {};
+        allResults.forEach(result => {
+          if (!resultsByPrompt[result.promptIndex]) {
+            resultsByPrompt[result.promptIndex] = [];
+          }
+          resultsByPrompt[result.promptIndex].push(result);
+        });
+        
+        // Start all evaluations (potentially in parallel)
+        const evaluationPromises = [];
+        
+        for (const [promptIndex, promptResults] of Object.entries(resultsByPrompt)) {
+          if (promptResults.length > 0) {
+            evaluationPromises.push(handleEvaluateResults(promptResults[0].prompt, promptResults));
+          }
         }
+        
+        // Wait for all evaluations to complete
+        await Promise.all(evaluationPromises);
       }
+    } catch (error) {
+      console.error("Unexpected error in handleSubmit:", error);
+      setApiError(`Unexpected error: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
   
@@ -297,12 +314,12 @@ const AdvisorPage = () => {
         }
         return "Maestro API key not found in environment variables. Please add it to your .env file as REACT_APP_MAESTRO_API_KEY.";
       });
-      return;
+      return Promise.resolve(); // Ensure we return a resolved promise
     }
     
     if (!modelResults || !modelResults.length || !modelResults[0]) {
       console.error("Invalid model results for evaluation");
-      return;
+      return Promise.resolve(); // Ensure we return a resolved promise
     }
     
     const promptIndex = modelResults[0].promptIndex;
@@ -322,6 +339,8 @@ const AdvisorPage = () => {
         ...prev,
         [promptIndex]: evaluation
       }));
+      
+      return evaluation; // Return the evaluation result
     } catch (error) {
       console.error(`Error evaluating model outputs for prompt ${promptIndex}:`, error);
       setApiError(prevError => {
@@ -330,6 +349,7 @@ const AdvisorPage = () => {
         }
         return error.message;
       });
+      return Promise.resolve(); // Ensure we return a resolved promise even on error
     } finally {
       // Set this prompt's evaluation as no longer loading
       setEvaluationLoading(prev => ({
