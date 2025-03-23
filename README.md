@@ -1,90 +1,6 @@
-# LLM Benchmark Finder
+# AI Model Advisor
 
-A FastAPI backend that helps benchmark and evaluate different LLM models for a given problem using AI21 and OpenRouter.
-
-## Features
-
-- Generate test questions for any problem using AI21's Jamba model
-- Test multiple LLM models via OpenRouter API with parallel processing for speed
-- Rank and score model responses
-- Return comprehensive results
-
-## Setup
-
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Set up your environment variables:
-   - Copy `.env.example` to `.env`
-   - Add your AI21 API key and OpenRouter API key:
-     ```
-     AI21_API_KEY=your_ai21_api_key_here
-     OPENROUTER_API_KEY=your_openrouter_api_key_here
-     ```
-
-## Running the API
-
-Start the API server:
-
-```bash
-uvicorn app:app --reload
-```
-
-The server will be available at http://localhost:8000
-
-## CLI Tool
-
-The repository includes a command-line tool for running benchmarks without needing to use a REST client.
-
-```bash
-# Basic usage
-./cli.py "Create a function to find the nth Fibonacci number"
-
-# Specify models to test
-./cli.py "Create a function to find the nth Fibonacci number" --models openai/gpt-4 anthropic/claude-3-opus
-
-# Change number of questions
-./cli.py "Create a function to find the nth Fibonacci number" --questions 3
-
-# Full options
-./cli.py --help
-```
-
-## API Documentation
-
-Once the server is running, view the interactive API documentation at:
-http://localhost:8000/docs
-
-## Usage Example
-
-Send a POST request to `/benchmark` endpoint with:
-
-```json
-{
-  "initial_prompt": "Create a function to find the nth Fibonacci number",
-  "num_questions": 10,
-  "models": [
-    "openai/gpt-3.5-turbo",
-    "anthropic/claude-3-opus",
-    "mistralai/mistral-large"
-  ]
-}
-```
-
-The response will include:
-- Generated test questions
-- Model responses for each question
-- Rankings and scores for each model
-
-## Performance
-
-The API processes all model queries concurrently using asyncio. This means that testing multiple models with multiple questions is significantly faster than sequential processing, as all API requests to OpenRouter happen in parallel.
-
-## Models
-
-You can use any model ID supported by OpenRouter. See the [OpenRouter documentation](https://openrouter.ai/docs) for a list of available models. 
+A modern web application for corporations to find the best AI models for their specific needs. This tool helps businesses compare different AI models based on cost, speed, accuracy, and other relevant factors.
 
 ## Architecture
 
@@ -93,7 +9,79 @@ The application uses Maestro Model with OpenRouter for LLM benchmarking to evalu
 ![LLM Benchmarking Architecture](/public/images/diagram.png)
 
 This architecture allows us to:
-- Route prompts through various LLM providers (GPT-4o, Claude 3.7 Sonnet, Llama-2)
+- Route prompts through various LLM providers (GPT-4o, Claude, Llama-2)
 - Evaluate performance on different tasks like language comprehension and logical reasoning
 - Aggregate responses for comparative analysis
-- Calculate metrics including accuracy, speed, and cost 
+- Calculate metrics including accuracy, speed, and cost
+
+## Features
+
+- **Intuitive UI**: Clean, modern interface for easy navigation
+- **Detailed Filtering**: Filter AI models based on specific requirements
+- **Visual Comparisons**: Compare models with interactive charts
+- **Comprehensive Information**: Get detailed information about each AI model
+- **Use Case Matching**: Find models that match your specific business needs
+
+## Screenshots
+
+![AI Model Advisor](https://via.placeholder.com/800x450?text=AI+Model+Advisor+Screenshot)
+
+## Installation and Setup
+
+### Prerequisites
+
+- Node.js (v14.0.0 or higher)
+- npm (v6.0.0 or higher)
+
+### Installation
+
+1. Clone this repository:
+```bash
+git clone https://github.com/your-username/ai-model-advisor.git
+cd ai-model-advisor
+```
+
+2. Install dependencies:
+```bash
+npm install
+```
+
+3. Start the development server:
+```bash
+npm start
+```
+
+4. Open your browser and navigate to `http://localhost:3000`
+
+## Building for Production
+
+To build the app for production, run:
+
+```bash
+npm run build
+```
+
+The build files will be stored in the `build` directory.
+
+## Technologies Used
+
+- **React**: Frontend library for building user interfaces
+- **Tailwind CSS**: Utility-first CSS framework for styling
+- **Chart.js**: JavaScript library for data visualization
+- **Headless UI**: Unstyled, accessible UI components
+
+## Future Enhancements
+
+- Add user accounts to save preferences
+- Implement more detailed model comparison tools
+- Add case studies for each model
+- Integrate with APIs to get real-time pricing information
+- Add a recommendation engine based on more complex criteria
+
+## License
+
+MIT License - see the LICENSE file for details.
+
+## Contact
+
+For questions or feedback, please reach out to [your-email@example.com](mailto:your-email@example.com) 
