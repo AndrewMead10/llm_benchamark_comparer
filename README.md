@@ -85,3 +85,15 @@ The API processes all model queries concurrently using asyncio. This means that 
 ## Models
 
 You can use any model ID supported by OpenRouter. See the [OpenRouter documentation](https://openrouter.ai/docs) for a list of available models. 
+
+## Architecture
+
+The application uses Maestro Model with OpenRouter for LLM benchmarking to evaluate model performance across different capabilities:
+
+![LLM Benchmarking Architecture](/public/images/diagram.png)
+
+This architecture allows us to:
+- Route prompts through various LLM providers (GPT-4o, Claude, Llama-2)
+- Evaluate performance on different tasks like language comprehension and logical reasoning
+- Aggregate responses for comparative analysis
+- Calculate metrics including accuracy, speed, and cost 
