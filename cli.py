@@ -58,8 +58,7 @@ async def run_benchmark(
                             if question_responses:
                                 print(f"\n{model} response:")
                                 print(f"{question_responses[0]['response']}")
-                                print("-" * 80)
-                
+                                print("-" * 80)                
             else:
                 print(f"❌ Error: {response.status_code}")
                 print(response.text)
