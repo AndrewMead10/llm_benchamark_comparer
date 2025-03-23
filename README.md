@@ -93,7 +93,7 @@ The application uses Maestro Model with OpenRouter for LLM benchmarking to evalu
 ![LLM Benchmarking Architecture](/public/images/diagram.png)
 
 This architecture allows us to:
-- Route prompts through various LLM providers (GPT-4o, Claude, Llama-2)
+- Route prompts through various LLM providers (GPT-4o, Claude 3.7 Sonnet, Llama-2)
 - Evaluate performance on different tasks like language comprehension and logical reasoning
 - Aggregate responses for comparative analysis
 - Calculate metrics including accuracy, speed, and cost 
