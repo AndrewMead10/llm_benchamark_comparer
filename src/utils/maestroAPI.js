@@ -124,6 +124,9 @@ export const evaluateModelOutputs = async (prompt, modelOutputs) => {
     return mockEvaluateModelOutputs(prompt, modelOutputs);
   }
 
+  // Check if there's a user benchmark
+  const hasBenchmark = modelOutputs.some(item => item.model.id === 'benchmark');
+  
   // Format the model outputs for evaluation
   const formattedOutputs = modelOutputs.map(item => ({
     name: item.model.name,
@@ -146,11 +149,13 @@ export const evaluateModelOutputs = async (prompt, modelOutputs) => {
           {
             role: "system",
             content: `You are an expert at evaluating AI model outputs. You will be given a prompt and multiple AI responses to that prompt from different models. 
+            ${hasBenchmark ? "One of the responses is labeled as 'User Benchmark' - this is the user's own answer and should be used as a reference point for evaluating the other AI responses." : ""}
             Analyze each response for accuracy, clarity, creativity, and usefulness. Provide a detailed comparison in markdown format that includes:
             
             1. Summary of strengths and weaknesses for each model
             2. Comparative analysis across all models
-            3. Recommendation on which model performed best and why`
+            3. Recommendation on which model performed best and why
+            ${hasBenchmark ? "4. How the AI models compare to the user's benchmark answer" : ""}`
           },
           {
             role: "user",
@@ -216,6 +221,7 @@ export const mockMaestroPromptGeneration = async (userInput) => {
 const mockEvaluateModelOutputs = async (prompt, modelOutputs) => {
   // Create a basic evaluation
   const modelNames = modelOutputs.map(item => item.model.name).join(', ');
+  const hasBenchmark = modelOutputs.some(item => item.model.id === 'benchmark');
   
   return `# Model Evaluation
 
@@ -242,6 +248,15 @@ The models show different approaches to the same prompt, with some providing mor
 ## Recommendation
 
 Based on the overall quality, completeness, and usefulness of the responses, ${modelOutputs[0]?.model.name || 'the first model'} appears to provide the most comprehensive and useful response to the given prompt.
+
+${hasBenchmark ? `
+## Comparison to User Benchmark
+
+The User Benchmark provides a human perspective that differs from the AI models in the following ways:
+- May show different reasoning approaches
+- Often more concise or focused on practical aspects
+- Provides a useful reference point for evaluating AI responses
+` : ''}
 
 *Note: This is an auto-generated evaluation as a fallback when the AI evaluation service is unavailable.*
 `;

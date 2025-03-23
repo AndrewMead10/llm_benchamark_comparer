@@ -57,6 +57,7 @@ const AdvisorPage = () => {
   const [selectedModels, setSelectedModels] = useState([]);
   const [userInput, setUserInput] = useState("");
   const [testPrompt, setTestPrompt] = useState("");
+  const [userBenchmark, setUserBenchmark] = useState("");
   const [promptLoading, setPromptLoading] = useState(false);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -98,6 +99,11 @@ const AdvisorPage = () => {
   const handleUserInputChange = (e) => {
     setUserInput(e.target.value);
     setApiError(""); // Clear previous errors
+  };
+
+  // Handle user benchmark changes
+  const handleUserBenchmarkChange = (e) => {
+    setUserBenchmark(e.target.value);
   };
 
   // Handle generating a test prompt using Maestro
@@ -151,10 +157,30 @@ const AdvisorPage = () => {
     setEvaluationResults(null);
     setApiError("");
     
-    const modelResults = [];
+    // Initialize results array, potentially including user benchmark
+    let modelResults = [];
     
-    // Test each selected model
-    for (const model of selectedModels) {
+    // If user provided a benchmark answer, include it in the results
+    if (userBenchmark.trim()) {
+      modelResults.push({
+        model: {
+          id: 'benchmark',
+          name: "User Benchmark",
+          provider: "User",
+          version: "N/A",
+          modelId: "user-benchmark"
+        },
+        output: userBenchmark,
+        metrics: {
+          tokensUsed: 0,
+          responseTime: 0,
+          cost: 0,
+        },
+      });
+    }
+    
+    // Define the async function to call a single model
+    const callModel = async (model) => {
       try {
         console.log(`Testing model: ${model.name}`);
         
@@ -192,14 +218,21 @@ const AdvisorPage = () => {
           cost: data.usage.cost,
         };
         
-        modelResults.push({
+        return {
           model,
           output,
           metrics,
-        });
+        };
       } catch (error) {
         console.error(`Error testing model ${model.name}:`, error);
-        modelResults.push({
+        setApiError(prevError => {
+          if (prevError) {
+            return `${prevError}; ${error.message}`;
+          }
+          return error.message;
+        });
+        
+        return {
           model,
           output: `Error: ${error.message}`,
           metrics: {
@@ -207,22 +240,29 @@ const AdvisorPage = () => {
             responseTime: 0,
             cost: 0,
           },
-        });
-        setApiError(prevError => {
-          if (prevError) {
-            return `${prevError}; ${error.message}`;
-          }
-          return error.message;
-        });
+        };
       }
-    }
+    };
     
-    setResults(modelResults);
-    setLoading(false);
-    
-    // If we have results, evaluate them using Maestro
-    if (modelResults.length > 0 && modelResults.some(r => !r.output.startsWith('Error'))) {
-      await handleEvaluateResults(testPrompt, modelResults);
+    try {
+      // Call all models in parallel and wait for all results
+      const modelPromises = selectedModels.map(model => callModel(model));
+      const apiResults = await Promise.all(modelPromises);
+      
+      // Combine benchmark (if any) with API results
+      modelResults = [...modelResults, ...apiResults];
+      
+      setResults(modelResults);
+      
+      // If we have results, evaluate them using Maestro
+      if (modelResults.length > 0 && modelResults.some(r => !r.output.startsWith('Error'))) {
+        await handleEvaluateResults(testPrompt, modelResults);
+      }
+    } catch (error) {
+      console.error("Error processing model results:", error);
+      setApiError(`Unexpected error: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
   
@@ -308,6 +348,23 @@ const AdvisorPage = () => {
               value={testPrompt}
               onChange={(e) => setTestPrompt(e.target.value)}
             ></textarea>
+          </div>
+          
+          {/* Add user benchmark input */}
+          <div className="mb-4">
+            <label className="block text-gray-700 mb-2">
+              Your Benchmark Answer (Optional):
+            </label>
+            <textarea
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows="4"
+              value={userBenchmark}
+              onChange={handleUserBenchmarkChange}
+              placeholder="Enter your own answer to serve as a benchmark for comparison..."
+            ></textarea>
+            <p className="mt-1 text-xs text-gray-500">
+              Your answer will be included in the evaluation to compare with AI models
+            </p>
           </div>
         </div>
       )}
