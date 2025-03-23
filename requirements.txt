@@ -1,8 +1,0 @@
-ai21
-python-dotenv
-fastapi
-uvicorn
-httpx
-pydantic
-openrouter
-pytest
