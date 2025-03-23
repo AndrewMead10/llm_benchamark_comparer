@@ -63,6 +63,8 @@ const AdvisorPage = () => {
   const [apiError, setApiError] = useState("");
   const [evaluationResults, setEvaluationResults] = useState(null);
   const [evaluationLoading, setEvaluationLoading] = useState(false);
+  const [promptCount, setPromptCount] = useState(1);
+
 
   // Check if we have API keys from environment variables
   useEffect(() => {
@@ -106,27 +108,31 @@ const AdvisorPage = () => {
       setApiError("Please enter a description of your use case first.");
       return;
     }
-
+  
     if (!process.env.REACT_APP_MAESTRO_API_KEY) {
       setApiError("Maestro API key not found in environment variables. Please add it to your .env file as REACT_APP_MAESTRO_API_KEY.");
       return;
     }
-
+  
     setPromptLoading(true);
     setApiError("");
     
     try {
-      console.log("Generating test prompt with Maestro API...");
-      const prompt = await generateTestPrompt(userInput);
-      setTestPrompt(prompt);
+      console.log(`Generating ${promptCount} test prompts with Maestro API...`);
+      const prompts = [];
+      for (let i = 0; i < promptCount; i++) {
+        const prompt = await generateTestPrompt(userInput);
+        prompts.push(prompt);
+      }
+      setTestPrompt(prompts.join('\n\n'));
     } catch (error) {
-      console.error("Error generating test prompt:", error);
-      setApiError(`Error generating test prompt: ${error.message}`);
+      console.error("Error generating test prompts:", error);
+      setApiError(`Error generating test prompts: ${error.message}`);
     } finally {
       setPromptLoading(false);
     }
   };
-
+  
   // Handle form submission - test the selected models
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -282,7 +288,20 @@ const AdvisorPage = () => {
             placeholder="E.g., I need an AI chatbot that can answer customer questions about our software products..."
           ></textarea>
         </div>
-        
+        <div className="mb-4">
+          <label className="block text-gray-700 mb-2">
+            Number of prompts to generate:
+          </label>
+          <input
+            type="number"
+            min="1"
+            max="10"
+            value={promptCount}
+            onChange={(e) => setPromptCount(Math.max(1, parseInt(e.target.value) || 1))}
+            className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
         <button 
           className={`px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${promptLoading ? 'opacity-75 cursor-not-allowed' : ''}`}
           onClick={handleGeneratePrompt}
@@ -293,24 +312,30 @@ const AdvisorPage = () => {
       </div>
       
       {testPrompt && (
-        <div className="bg-white shadow rounded-lg p-6 mb-8">
-          <h2 className="text-2xl font-semibold mb-4">Step 2: Review the test prompt</h2>
-          <div className="bg-gray-100 p-4 rounded-md mb-4">
-            <p className="font-mono whitespace-pre-wrap">{testPrompt}</p>
-          </div>
-          <div className="mb-4">
-            <label className="block text-gray-700 mb-2">
-              Edit the prompt if needed:
-            </label>
-            <textarea
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              rows="4"
-              value={testPrompt}
-              onChange={(e) => setTestPrompt(e.target.value)}
-            ></textarea>
-          </div>
+  <div className="bg-white shadow rounded-lg p-6 mb-8">
+    <h2 className="text-2xl font-semibold mb-4">Step 2: Review the test prompts</h2>
+    <div className="bg-gray-100 p-4 rounded-md mb-4">
+      {testPrompt.split('\n\n').map((prompt, index) => (
+        <div key={index} className="mb-4">
+          <h3 className="font-semibold mb-2">Prompt {index + 1}:</h3>
+          <p className="font-mono whitespace-pre-wrap">{prompt}</p>
         </div>
-      )}
+      ))}
+    </div>
+    <div className="mb-4">
+      <label className="block text-gray-700 mb-2">
+        Edit the prompts if needed:
+      </label>
+      <textarea
+        className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        rows="8"
+        value={testPrompt}
+        onChange={(e) => setTestPrompt(e.target.value)}
+      ></textarea>
+    </div>
+  </div>
+)}
+
       
       <div className="bg-white shadow rounded-lg p-6 mb-8">
         <h2 className="text-2xl font-semibold mb-4">Step 3: Select models to compare (max 3)</h2>
