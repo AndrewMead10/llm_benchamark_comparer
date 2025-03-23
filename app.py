@@ -51,12 +51,19 @@ async def generate_test_questions(prompt: str, num_questions: int = 10) -> List[
     
     Your response should be an array of strings, each representing a question. It should be parsable, valid json. Do not include anything else other than the array of questions.
 
-    Example response:
+    Example response 1:
     [
         "What is the capital of France?",
         "What is the capital of Germany?",
         "What is the capital of Italy?",
         "What is the capital of Spain?",
+    ]
+
+    Example response 2:
+    [
+        "How many fp8 tflops does the nvidia b200 have?",
+        "How many fp8 tflops does the nvidia a100 have?",
+        "what is the difference between the nvidia a100 and the nvidia b200?"
     ]
     """
     
@@ -64,13 +71,22 @@ async def generate_test_questions(prompt: str, num_questions: int = 10) -> List[
         response = ai21_client.beta.maestro.runs.create_and_poll(
             model='jamba-large',
             system=system_prompt,
-            input=user_prompt
+            input=user_prompt,
+            requirements=[
+                {
+                    "name": "json format",
+                    "description": "The response should be a valid json array of strings, each representing a question.",
+                },
+            ]
         )
         
         # Extract questions from the response
         result_text = response.result
 
         print(result_text)
+
+        # remove ```json and ``` from the result text
+        result_text = result_text.replace("```json", "").replace("```", "")
 
         # Parse the result text into a list of questions
         questions = json.loads(result_text) 
