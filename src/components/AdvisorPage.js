@@ -61,9 +61,9 @@ const AdvisorPage = () => {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState("");
-  const [evaluationResults, setEvaluationResults] = useState(null);
-  const [evaluationLoading, setEvaluationLoading] = useState(false);
-  const [promptCount, setPromptCount] = useState(1);
+  const [evaluationResults, setEvaluationResults] = useState({});
+  const [evaluationLoading, setEvaluationLoading] = useState({});
+  const [promptCount, setPromptCount] = useState(5);
 
 
   // Check if we have API keys from environment variables
@@ -119,14 +119,20 @@ const AdvisorPage = () => {
     
     try {
       console.log(`Generating ${promptCount} test prompts with Maestro API...`);
-      const prompts = [];
-
-      //change the requirements_obj to change the output format
-      let requirements_obj = { "name": "json output", "description":"give output in json format only where each prompt is differnt" };
       
-      // the prompts should be list format from backend
-      prompts = await generateTestPrompt(userInput, requirements_obj);
-
+      // Create requirements object for JSON array output
+      const requirements = [
+        {
+          name: "json_array_output",
+          description: `Generate ${promptCount} distinct test prompts and return them as a JSON array of strings`,
+          is_mandatory: true
+        }
+      ];
+      
+      // Get array of prompts from the API
+      const prompts = await generateTestPrompt(userInput, requirements);
+      
+      // Join prompts with double newline for display
       setTestPrompt(prompts.join('\n\n'));
     } catch (error) {
       console.error("Error generating test prompts:", error);
@@ -157,81 +163,111 @@ const AdvisorPage = () => {
     
     setLoading(true);
     setResults([]);
-    setEvaluationResults(null);
+    setEvaluationResults({});
     setApiError("");
     
-    const modelResults = [];
+    // Split the prompt text into individual prompts
+    const promptArray = testPrompt.split('\n\n').filter(p => p.trim());
+    const allResults = [];
     
-    // Test each selected model
-    for (const model of selectedModels) {
-      try {
-        console.log(`Testing model: ${model.name}`);
-        
-        // Make API call to OpenRouter
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": window.location.origin,
-            "X-Title": "AI Model Advisor"
-          },
-          body: JSON.stringify({
-            model: model.modelId,
-            messages: [
-              { role: "user", content: testPrompt }
-            ],
-            max_tokens: 1024,
-            temperature: 0.7,
-          }),
-        });
-        
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(`Error from ${model.name}: ${errorData.error?.message || 'Unknown error'}`);
-        }
-        
-        const data = await response.json();
-        const output = data.choices[0].message.content;
-        
-        // Add metrics
-        const metrics = {
-          tokensUsed: data.usage.total_tokens,
-          responseTime: data.response_ms / 1000, // Convert to seconds
-          cost: data.usage.cost,
-        };
-        
-        modelResults.push({
-          model,
-          output,
-          metrics,
-        });
-      } catch (error) {
-        console.error(`Error testing model ${model.name}:`, error);
-        modelResults.push({
-          model,
-          output: `Error: ${error.message}`,
-          metrics: {
-            tokensUsed: 0,
-            responseTime: 0,
-            cost: 0,
-          },
-        });
-        setApiError(prevError => {
-          if (prevError) {
-            return `${prevError}; ${error.message}`;
+    // For each prompt, test it against all selected models
+    for (let promptIndex = 0; promptIndex < promptArray.length; promptIndex++) {
+      const currentPrompt = promptArray[promptIndex];
+      const promptResults = [];
+      
+      // Test each selected model with the current prompt
+      for (const model of selectedModels) {
+        try {
+          console.log(`Testing model: ${model.name} with prompt ${promptIndex + 1}`);
+          
+          // Make API call to OpenRouter
+          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer": window.location.origin,
+              "X-Title": "AI Model Advisor"
+            },
+            body: JSON.stringify({
+              model: model.modelId,
+              messages: [
+                { role: "user", content: currentPrompt }
+              ],
+              max_tokens: 1024,
+              temperature: 0.7,
+            }),
+          });
+          
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`Error from ${model.name}: ${errorData.error?.message || 'Unknown error'}`);
           }
-          return error.message;
-        });
+          
+          const data = await response.json();
+          const output = data.choices[0].message.content;
+          
+          // Add metrics
+          const metrics = {
+            tokensUsed: data.usage.total_tokens,
+            responseTime: data.response_ms / 1000, // Convert to seconds
+            cost: data.usage.cost,
+          };
+          
+          promptResults.push({
+            model,
+            output,
+            metrics,
+            prompt: currentPrompt,
+            promptIndex: promptIndex + 1
+          });
+        } catch (error) {
+          console.error(`Error testing model ${model.name} with prompt ${promptIndex + 1}:`, error);
+          promptResults.push({
+            model,
+            output: `Error: ${error.message}`,
+            metrics: {
+              tokensUsed: 0,
+              responseTime: 0,
+              cost: 0,
+            },
+            prompt: currentPrompt,
+            promptIndex: promptIndex + 1
+          });
+          setApiError(prevError => {
+            if (prevError) {
+              return `${prevError}; ${error.message}`;
+            }
+            return error.message;
+          });
+        }
       }
+      
+      // Add results from this prompt to all results
+      allResults.push(...promptResults);
     }
     
-    setResults(modelResults);
+    setResults(allResults);
     setLoading(false);
     
     // If we have results, evaluate them using Maestro
-    if (modelResults.length > 0 && modelResults.some(r => !r.output.startsWith('Error'))) {
-      await handleEvaluateResults(testPrompt, modelResults);
+    // Group results by prompt for evaluation
+    if (allResults.length > 0 && allResults.some(r => !r.output.startsWith('Error'))) {
+      // Group by promptIndex
+      const resultsByPrompt = {};
+      allResults.forEach(result => {
+        if (!resultsByPrompt[result.promptIndex]) {
+          resultsByPrompt[result.promptIndex] = [];
+        }
+        resultsByPrompt[result.promptIndex].push(result);
+      });
+      
+      // Evaluate each group of results
+      for (const [promptIndex, promptResults] of Object.entries(resultsByPrompt)) {
+        if (promptResults.length > 0) {
+          await handleEvaluateResults(promptResults[0].prompt, promptResults);
+        }
+      }
     }
   };
   
@@ -247,14 +283,25 @@ const AdvisorPage = () => {
       return;
     }
     
-    setEvaluationLoading(true);
+    const promptIndex = modelResults[0].promptIndex;
+    
+    // Set this prompt's evaluation as loading
+    setEvaluationLoading(prev => ({
+      ...prev,
+      [promptIndex]: true
+    }));
     
     try {
-      console.log("Evaluating model outputs with Maestro API...");
+      console.log(`Evaluating model outputs for prompt ${promptIndex} with Maestro API...`);
       const evaluation = await evaluateModelOutputs(prompt, modelResults);
-      setEvaluationResults(evaluation);
+      
+      // Add the evaluation result for this prompt
+      setEvaluationResults(prev => ({
+        ...prev,
+        [promptIndex]: evaluation
+      }));
     } catch (error) {
-      console.error("Error evaluating model outputs:", error);
+      console.error(`Error evaluating model outputs for prompt ${promptIndex}:`, error);
       setApiError(prevError => {
         if (prevError) {
           return `${prevError}; ${error.message}`;
@@ -262,7 +309,11 @@ const AdvisorPage = () => {
         return error.message;
       });
     } finally {
-      setEvaluationLoading(false);
+      // Set this prompt's evaluation as no longer loading
+      setEvaluationLoading(prev => ({
+        ...prev,
+        [promptIndex]: false
+      }));
     }
   };
 
@@ -293,16 +344,20 @@ const AdvisorPage = () => {
         </div>
         <div className="mb-4">
           <label className="block text-gray-700 mb-2">
-            Number of prompts to generate:
+            Number of prompts to generate: {promptCount}
           </label>
-          <input
-            type="number"
-            min="1"
-            max="10"
-            value={promptCount}
-            onChange={(e) => setPromptCount(Math.max(1, parseInt(e.target.value) || 1))}
-            className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+          <div className="flex items-center">
+            <span className="mr-2">1</span>
+            <input
+              type="range"
+              min="1"
+              max="10"
+              value={promptCount}
+              onChange={(e) => setPromptCount(parseInt(e.target.value))}
+              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+            />
+            <span className="ml-2">10</span>
+          </div>
         </div>
 
         <button 
@@ -370,33 +425,78 @@ const AdvisorPage = () => {
         <div className="bg-white shadow rounded-lg p-6 mb-8">
           <h2 className="text-2xl font-semibold mb-6">Test Results</h2>
           
-          {/* Metrics Comparison Chart */}
-          <div className="mb-8">
-            <h3 className="text-xl font-semibold mb-4">Performance Metrics</h3>
-            <ComparisonChart results={results} />
-          </div>
-          
-          {/* Model Outputs */}
-          <h3 className="text-xl font-semibold mb-4">Model Responses</h3>
-          <div className="space-y-6">
-            {results.map((result, index) => (
-              <div key={index} className="border rounded-lg p-4">
-                <h4 className="text-lg font-medium mb-2">{result.model.name}</h4>
-                <pre className="bg-gray-100 p-3 rounded whitespace-pre-wrap">{result.output}</pre>
+          {/* Group results by prompt */}
+          {(() => {
+            // Group results by prompt index
+            const resultsByPrompt = {};
+            results.forEach(result => {
+              if (!resultsByPrompt[result.promptIndex]) {
+                resultsByPrompt[result.promptIndex] = [];
+              }
+              resultsByPrompt[result.promptIndex].push(result);
+            });
+            
+            // Render each prompt group
+            return Object.entries(resultsByPrompt).map(([promptIndex, promptResults]) => (
+              <div key={promptIndex} className="mb-10 border-b pb-8">
+                <h3 className="text-xl font-semibold mb-4">Prompt {promptIndex}</h3>
+                <div className="bg-gray-100 p-3 rounded mb-6">
+                  <p className="font-mono whitespace-pre-wrap">{promptResults[0].prompt}</p>
+                </div>
+                
+                {/* Metrics Comparison Chart for this prompt */}
+                <div className="mb-8">
+                  <h4 className="text-lg font-semibold mb-4">Performance Metrics</h4>
+                  <ComparisonChart results={promptResults} />
+                </div>
+                
+                {/* Model Outputs for this prompt */}
+                <h4 className="text-lg font-semibold mb-4">Model Responses</h4>
+                <div className="space-y-6">
+                  {promptResults.map((result, index) => (
+                    <div key={index} className="border rounded-lg p-4">
+                      <h5 className="text-md font-medium mb-2">{result.model.name}</h5>
+                      <pre className="bg-gray-100 p-3 rounded whitespace-pre-wrap">{result.output}</pre>
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
+            ));
+          })()}
         </div>
       )}
       
       {/* Maestro Evaluation Results */}
-      {(evaluationLoading || evaluationResults) && (
+      {(Object.keys(evaluationLoading).length > 0 || Object.keys(evaluationResults).length > 0) && (
         <div className="bg-white shadow rounded-lg p-6 mb-8">
-          <h2 className="text-2xl font-semibold mb-4">AI-Powered Evaluation</h2>
-          <MaestroEvaluation 
-            loading={evaluationLoading}
-            evaluation={evaluationResults}
-          />
+          <h2 className="text-2xl font-semibold mb-4">AI-Powered Evaluations</h2>
+          
+          {/* Show evaluations for each prompt */}
+          {Object.entries(evaluationResults).map(([promptIndex, evaluation]) => (
+            <div key={promptIndex} className="mb-8 border-b pb-6">
+              <h3 className="text-xl font-semibold mb-3">Evaluation for Prompt {promptIndex}</h3>
+              <MaestroEvaluation 
+                loading={evaluationLoading[promptIndex]}
+                evaluation={evaluation}
+              />
+            </div>
+          ))}
+          
+          {/* Show loading indicators for evaluations in progress */}
+          {Object.entries(evaluationLoading)
+            .filter(([_, isLoading]) => isLoading)
+            .map(([promptIndex]) => (
+              !evaluationResults[promptIndex] && (
+                <div key={promptIndex} className="mb-8 border-b pb-6">
+                  <h3 className="text-xl font-semibold mb-3">Evaluation for Prompt {promptIndex}</h3>
+                  <MaestroEvaluation 
+                    loading={true}
+                    evaluation={null}
+                  />
+                </div>
+              )
+            ))
+          }
         </div>
       )}
     </div>

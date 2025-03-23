@@ -72,9 +72,10 @@ const checkRunStatus = async (runId) => {
 /**
  * Generate a test prompt using AI21 Maestro based on user's general use case description
  * @param {string} userInput - The user's description of what they want to use AI for
- * @returns {Promise<string>} - A well-formulated test prompt
+ * @param {object} requirements - Optional requirements for the Maestro API
+ * @returns {Promise<Array<string>>} - An array of well-formulated test prompts
  */
-export const generateTestPrompt = async (userInput) => {
+export const generateTestPrompt = async (userInput, requirements = null) => {
   console.log("generateTestPrompt called with input:", userInput);
   console.log("Using API key:", MAESTRO_API_KEY ? "API key present (length: " + MAESTRO_API_KEY.length + ")" : "No API key");
   
@@ -82,11 +83,20 @@ export const generateTestPrompt = async (userInput) => {
   if (!MAESTRO_API_KEY) {
     console.error("No API key found");
     // Use the mock function instead of throwing an error
-    return "There was an error generating the test prompt. Please try again later.";
+    return ["There was an error generating the test prompt. Please try again later."];
   }
 
   try {
     console.log("Making request to AI21 Maestro API...");
+    
+    // Default requirement if none provided
+    const defaultRequirements = [
+      {
+        name: "concise",
+        description: "Output only the exact prompt text with no explanations or formatting",
+        is_mandatory: true
+      }
+    ];
     
     // Using AI21's Maestro endpoint to create a run
     const response = await fetch("https://api.ai21.com/studio/v1/maestro/runs", {
@@ -99,21 +109,15 @@ export const generateTestPrompt = async (userInput) => {
         input: [
           {
             role: "user",
-            content: `Create a test prompt based on the following use case description: ${userInput}`
+            content: `Create test prompts based on the following use case description: ${userInput}`
           }
         ],
         context: {
           purpose: "test_prompt_generation",
-          instructions: "You are an AI test prompt designer. Given a user's description of what they want to use AI for, generate a single high-quality test prompt that would be ideal for comparing different AI models. The prompt should be specific, clear, and designed to test capabilities relevant to the user's needs. Do not include any explanations or formatting - just return the exact prompt text that should be sent to models."
+          instructions: "You are an AI test prompt designer. Given a user's description of what they want to use AI for, generate high-quality test prompts that would be ideal for comparing different AI models. The prompts should be specific, clear, and designed to test capabilities relevant to the user's needs. Return the results as a valid JSON array of strings with no additional explanations."
         },
         // models: ["jamba-large-1.6"],
-        requirements: [
-          {
-            name: "concise",
-            description: "Output only the exact prompt text with no explanations or formatting",
-            is_mandatory: true
-          }
-        ]
+        requirements: requirements || defaultRequirements
       }),
     });
 
@@ -130,7 +134,7 @@ export const generateTestPrompt = async (userInput) => {
       console.error("AI21 Maestro API error details:", errorData);
       
       // Instead of throwing an error, fall back to mock functionality
-      return "There was an error generating the test prompt. Please try again later.";
+      return ["There was an error generating the test prompt. Please try again later."];
     }
 
     // Get the run ID from the initial response
@@ -142,7 +146,7 @@ export const generateTestPrompt = async (userInput) => {
     
     if (!completedRun) {
       console.error("Failed to get completed run");
-      return "There was an error generating the test prompt. Please try again later.";
+      return ["There was an error generating the test prompt. Please try again later."];
     }
     
     console.log("AI21 Maestro run completed successfully");
@@ -150,11 +154,23 @@ export const generateTestPrompt = async (userInput) => {
     // Extract the response from the Maestro output
     const completionText = completedRun.result || "";
     
-    return completionText.trim();
+    // Parse the JSON result if it's in JSON format
+    try {
+      // Check if the result is a JSON array
+      if (completionText.trim().startsWith('[') && completionText.trim().endsWith(']')) {
+        return JSON.parse(completionText.trim());
+      }
+      // Otherwise treat it as a single prompt
+      return [completionText.trim()];
+    } catch (error) {
+      console.error("Error parsing JSON prompts:", error);
+      // Return as a single prompt if JSON parsing fails
+      return [completionText.trim()];
+    }
   } catch (error) {
     console.error("Error in AI21 generateTestPrompt:", error);
     // Fall back to mock functionality instead of throwing the error
-    return "There was an error generating the test prompt. Please try again later.";
+    return ["There was an error generating the test prompt. Please try again later."];
   }
 };
 
