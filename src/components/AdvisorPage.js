@@ -120,10 +120,13 @@ const AdvisorPage = () => {
     try {
       console.log(`Generating ${promptCount} test prompts with Maestro API...`);
       const prompts = [];
-      for (let i = 0; i < promptCount; i++) {
-        const prompt = await generateTestPrompt(userInput);
-        prompts.push(prompt);
-      }
+
+      //change the requirements_obj to change the output format
+      let requirements_obj = { "name": "json output", "description":"give output in json format only where each prompt is differnt" };
+      
+      // the prompts should be list format from backend
+      prompts = await generateTestPrompt(userInput, requirements_obj);
+
       setTestPrompt(prompts.join('\n\n'));
     } catch (error) {
       console.error("Error generating test prompts:", error);
