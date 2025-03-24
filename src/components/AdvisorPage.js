@@ -53,6 +53,66 @@ const models = [
 // Get API keys from environment variables
 const OPENROUTER_API_KEY = process.env.REACT_APP_OPENROUTER_API_KEY || "";
 
+// Function to safely parse cost values
+const parseCost = (costValue) => {
+  if (costValue === undefined || costValue === null) return 0;
+  
+  // Handle if cost is provided as a string with dollar sign ($0.004200)
+  if (typeof costValue === 'string') {
+    // Remove dollar sign or any non-numeric characters except dots
+    const cleanedValue = costValue.replace(/[^0-9.]/g, '');
+    return Number(cleanedValue) || 0;
+  }
+  
+  // Handle if cost is provided as a number
+  return Number(costValue) || 0;
+};
+
+// Helper to extract cost from OpenRouter response
+const extractCost = (data) => {
+  // Check all possible locations where cost might be stored
+  if (data.usage && typeof data.usage === 'object') {
+    // Try multiple possible paths for cost information
+    return data.usage.cost || 
+           data.usage.cost_usd || 
+           data.usage.billing_cost ||
+           (data.usage.completion_tokens && data.model_info && data.model_info.per_token && 
+            data.usage.completion_tokens * data.model_info.per_token.completion) ||
+           0;
+  }
+  
+  // Check if cost is directly on data object
+  return data.cost || data.cost_usd || data.billing_cost || 0;
+};
+
+// Function to manually estimate cost based on token count
+const estimateCost = (model, totalTokens) => {
+  // Default to a reasonable value if we can't determine
+  let costPer1kTokens = 0.002;
+  
+  // Pricing estimates for common models (rough approximations)
+  const pricingRates = {
+    'gpt-3.5-turbo': 0.0015,
+    'gpt-4': 0.03,
+    'gpt-4-turbo': 0.01,
+    'claude-3-opus': 0.015,
+    'claude-3-sonnet': 0.003,
+    'gemini-pro': 0.001,
+    'llama-3': 0.0007,
+  };
+  
+  // Try to match the model to known pricing rates
+  for (const [modelName, rate] of Object.entries(pricingRates)) {
+    if (model.modelId.toLowerCase().includes(modelName)) {
+      costPer1kTokens = rate;
+      break;
+    }
+  }
+  
+  // Calculate cost: tokens * rate per 1k tokens / 1000
+  return (totalTokens * costPer1kTokens) / 1000;
+};
+
 const AdvisorPage = () => {
   const [selectedModels, setSelectedModels] = useState([]);
   const [userInput, setUserInput] = useState("");
@@ -197,6 +257,9 @@ const AdvisorPage = () => {
         try {
           console.log(`Testing model: ${model.name} with prompt ${promptIndex + 1}`);
           
+          // Track start time for manual response time calculation if needed
+          const startTime = Date.now();
+          
           // Make API call to OpenRouter
           const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
@@ -222,14 +285,35 @@ const AdvisorPage = () => {
           }
           
           const data = await response.json();
+          
+          // Calculate elapsed time if needed
+          const elapsedTimeMs = Date.now() - startTime;
+          
+          // Log the full response for debugging
+          console.log('Full OpenRouter API response:', JSON.stringify(data, null, 2));
+          
           const output = data.choices[0].message.content;
           
           // Add metrics
+          const extractedCost = extractCost(data);
           const metrics = {
             tokensUsed: data.usage.total_tokens,
-            responseTime: data.response_ms / 1000, // Convert to seconds
-            cost: data.usage.cost,
+            // Try to use API-provided response time, fall back to our calculation
+            responseTime: data.response_ms ? data.response_ms / 1000 : 
+                        (data.usage && data.usage.response_ms ? data.usage.response_ms / 1000 :
+                        elapsedTimeMs / 1000),
+            // Use our improved cost extraction with fallback to estimation
+            cost: extractedCost ? parseCost(extractedCost) : estimateCost(model, data.usage.total_tokens),
           };
+          
+          console.log('Extracted metrics for', model.name, ':', {
+            tokensUsed: metrics.tokensUsed,
+            responseTime: metrics.responseTime,
+            rawCost: extractedCost,
+            estimatedCost: extractedCost ? null : estimateCost(model, data.usage.total_tokens),
+            parsedCost: metrics.cost,
+            modelInfo: data.model_info
+          });
           
           promptResults.push({
             model,
@@ -485,7 +569,7 @@ const AdvisorPage = () => {
                     modelPerformance[modelId].promptCount++;
                     modelPerformance[modelId].totalResponseTime += result.metrics.responseTime || 0;
                     console.log(`Model ${result.model.name} cost: ${result.metrics.cost} (raw value)`);
-                    modelPerformance[modelId].totalCost += result.metrics.cost || 0;
+                    modelPerformance[modelId].totalCost += parseCost(result.metrics.cost) || 0;
                     modelPerformance[modelId].totalTokens += result.metrics.tokensUsed || 0;
                   }
                 });
@@ -563,7 +647,7 @@ const AdvisorPage = () => {
                           modelPerformance[modelId].promptCount++;
                           modelPerformance[modelId].totalResponseTime += result.metrics.responseTime || 0;
                           console.log(`Model ${result.model.name} cost: ${result.metrics.cost} (raw value)`);
-                          modelPerformance[modelId].totalCost += result.metrics.cost || 0;
+                          modelPerformance[modelId].totalCost += parseCost(result.metrics.cost) || 0;
                           modelPerformance[modelId].totalTokens += result.metrics.tokensUsed || 0;
                         }
                       });
@@ -649,7 +733,7 @@ const AdvisorPage = () => {
                     if (!result.output?.startsWith('Error') && result.metrics) {
                       modelPerformance[modelId].promptCount++;
                       modelPerformance[modelId].totalResponseTime += result.metrics.responseTime || 0;
-                      modelPerformance[modelId].totalCost += result.metrics.cost || 0;
+                      modelPerformance[modelId].totalCost += parseCost(result.metrics.cost) || 0;
                       modelPerformance[modelId].totalTokens += result.metrics.tokensUsed || 0;
                     }
                   });
@@ -853,7 +937,7 @@ const AdvisorPage = () => {
                                 </div>
                                 <div className="flex items-center">
                                   <span className="text-xs text-gray-500 mr-3">
-                                    {(result?.metrics?.responseTime || 0).toFixed(2)}s | ${(result?.metrics?.cost || 0).toFixed(8)} | {result?.metrics?.tokensUsed || 0} tokens
+                                    {(result?.metrics?.responseTime || 0).toFixed(2)}s | ${parseCost(result?.metrics?.cost).toFixed(8)} | {result?.metrics?.tokensUsed || 0} tokens
                                   </span>
                                   <button className="p-1 rounded-full hover:bg-gray-200">
                                     {isModelExpanded ? (
