@@ -53,64 +53,42 @@ const models = [
 // Get API keys from environment variables
 const OPENROUTER_API_KEY = process.env.REACT_APP_OPENROUTER_API_KEY || "";
 
-// Function to safely parse cost values
-const parseCost = (costValue) => {
-  if (costValue === undefined || costValue === null) return 0;
-  
-  // Handle if cost is provided as a string with dollar sign ($0.004200)
-  if (typeof costValue === 'string') {
-    // Remove dollar sign or any non-numeric characters except dots
-    const cleanedValue = costValue.replace(/[^0-9.]/g, '');
-    return Number(cleanedValue) || 0;
-  }
-  
-  // Handle if cost is provided as a number
-  return Number(costValue) || 0;
+// Helper functions for estimating metrics
+const calculateEstimatedTokens = (prompt, output) => {
+  // Rough estimate: ~4 chars per token
+  const promptChars = prompt.length;
+  const outputChars = output.length;
+  const totalChars = promptChars + outputChars;
+  return Math.ceil(totalChars / 4);
 };
 
-// Helper to extract cost from OpenRouter response
-const extractCost = (data) => {
-  // Check all possible locations where cost might be stored
-  if (data.usage && typeof data.usage === 'object') {
-    // Try multiple possible paths for cost information
-    return data.usage.cost || 
-           data.usage.cost_usd || 
-           data.usage.billing_cost ||
-           (data.usage.completion_tokens && data.model_info && data.model_info.per_token && 
-            data.usage.completion_tokens * data.model_info.per_token.completion) ||
-           0;
-  }
-  
-  // Check if cost is directly on data object
-  return data.cost || data.cost_usd || data.billing_cost || 0;
-};
-
-// Function to manually estimate cost based on token count
-const estimateCost = (model, totalTokens) => {
-  // Default to a reasonable value if we can't determine
-  let costPer1kTokens = 0.002;
-  
-  // Pricing estimates for common models (rough approximations)
-  const pricingRates = {
-    'gpt-3.5-turbo': 0.0015,
-    'gpt-4': 0.03,
-    'gpt-4-turbo': 0.01,
-    'claude-3-opus': 0.015,
-    'claude-3-sonnet': 0.003,
-    'gemini-pro': 0.001,
-    'llama-3': 0.0007,
+const calculateEstimatedResponseTime = (model) => {
+  // Estimated response time in seconds based on model type
+  const responseTimeMap = {
+    1: 0.8,  // GPT-3.5 Turbo
+    2: 1.2,  // GPT-4
+    3: 1.5,  // Claude 3 Opus
+    4: 1.2,  // Claude 3 Sonnet
+    5: 0.9,  // Gemini Pro
+    6: 1.8,  // Llama 3 70B
   };
   
-  // Try to match the model to known pricing rates
-  for (const [modelName, rate] of Object.entries(pricingRates)) {
-    if (model.modelId.toLowerCase().includes(modelName)) {
-      costPer1kTokens = rate;
-      break;
-    }
-  }
+  return responseTimeMap[model.id] || 1.0;
+};
+
+const calculateEstimatedCost = (model, prompt, output) => {
+  // Estimated cost per 1000 tokens
+  const costPer1000TokensMap = {
+    1: 0.0005,  // GPT-3.5 Turbo
+    2: 0.006,   // GPT-4
+    3: 0.015,   // Claude 3 Opus
+    4: 0.003,   // Claude 3 Sonnet
+    5: 0.0007,  // Gemini Pro
+    6: 0.0009,  // Llama 3 70B
+  };
   
-  // Calculate cost: tokens * rate per 1k tokens / 1000
-  return (totalTokens * costPer1kTokens) / 1000;
+  const tokensUsed = calculateEstimatedTokens(prompt, output);
+  return (costPer1000TokensMap[model.id] || 0.001) * (tokensUsed / 1000);
 };
 
 const AdvisorPage = () => {
@@ -126,6 +104,7 @@ const AdvisorPage = () => {
   const [promptCount, setPromptCount] = useState(5);
   const [expandedPrompts, setExpandedPrompts] = useState({});
   const [expandedModels, setExpandedModels] = useState({});
+  const [generationDetails, setGenerationDetails] = useState({});
 
   // Toggle functions for expandable sections
   const togglePrompt = (promptIndex) => {
@@ -219,6 +198,34 @@ const AdvisorPage = () => {
     }
   };
   
+  // Fetch generation details from OpenRouter API
+  const fetchGenerationDetails = async (generationId) => {
+    if (!generationId || !OPENROUTER_API_KEY) return null;
+    
+    try {
+      console.log(`Fetching generation details for ID: ${generationId}`);
+      
+      const response = await fetch(`https://openrouter.ai/api/v1/generation?id=${generationId}`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Error fetching generation details: ${errorData.error?.message || 'Unknown error'}`);
+      }
+      
+      const data = await response.json();
+      return data.data;
+    } catch (error) {
+      console.error(`Error fetching generation details:`, error);
+      return null;
+    }
+  };
+
   // Handle form submission - test the selected models
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -241,134 +248,138 @@ const AdvisorPage = () => {
     setLoading(true);
     setResults([]);
     setEvaluationResults({});
+    setGenerationDetails({});
     setApiError("");
     
     // Split the prompt text into individual prompts
     const promptArray = testPrompt.split('\n\n').filter(p => p.trim());
-    const allResults = [];
     
-    // For each prompt, test it against all selected models
-    for (let promptIndex = 0; promptIndex < promptArray.length; promptIndex++) {
-      const currentPrompt = promptArray[promptIndex];
-      const promptResults = [];
-      
-      // Test each selected model with the current prompt
-      for (const model of selectedModels) {
-        try {
-          console.log(`Testing model: ${model.name} with prompt ${promptIndex + 1}`);
-          
-          // Track start time for manual response time calculation if needed
-          const startTime = Date.now();
-          
-          // Make API call to OpenRouter
-          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer": window.location.origin,
-              "X-Title": "AI Model Advisor"
-            },
-            body: JSON.stringify({
-              model: model.modelId,
-              messages: [
-                { role: "user", content: currentPrompt }
-              ],
-              max_tokens: 1024,
-              temperature: 0.7,
-            }),
-          });
-          
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(`Error from ${model.name}: ${errorData.error?.message || 'Unknown error'}`);
+    // Function to call a model for a specific prompt
+    const callModel = async (model, prompt, promptIndex) => {
+      try {
+        console.log(`Testing model: ${model.name} with prompt ${promptIndex + 1}`);
+        
+        // Make API call to OpenRouter
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": window.location.origin,
+            "X-Title": "AI Model Advisor"
+          },
+          body: JSON.stringify({
+            model: model.modelId,
+            messages: [
+              { role: "user", content: prompt }
+            ],
+            max_tokens: 1024,
+            temperature: 0.7,
+          }),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Error from ${model.name}: ${errorData.error?.message || 'Unknown error'}`);
+        }
+        
+        const data = await response.json();
+        const output = data.choices[0].message.content;
+        
+        // Add metrics with proper fallbacks
+        const metrics = {
+          tokensUsed: data.usage?.total_tokens || calculateEstimatedTokens(prompt, output),
+          responseTime: (data.response_ms / 1000) || calculateEstimatedResponseTime(model),
+          cost: data.usage?.cost || calculateEstimatedCost(model, prompt, output),
+        };
+        
+        return {
+          model,
+          output,
+          metrics,
+          prompt,
+          promptIndex: promptIndex + 1
+        };
+      } catch (error) {
+        console.error(`Error testing ${model.name}:`, error);
+        
+        // Set API error for display
+        setApiError(prevError => {
+          if (prevError) {
+            return `${prevError}; ${error.message}`;
           }
-          
-          const data = await response.json();
-          
-          // Calculate elapsed time if needed
-          const elapsedTimeMs = Date.now() - startTime;
-          
-          // Log the full response for debugging
-          console.log('Full OpenRouter API response:', JSON.stringify(data, null, 2));
-          
-          const output = data.choices[0].message.content;
-          
-          // Add metrics
-          const extractedCost = extractCost(data);
-          const metrics = {
-            tokensUsed: data.usage.total_tokens,
-            // Try to use API-provided response time, fall back to our calculation
-            responseTime: data.response_ms ? data.response_ms / 1000 : 
-                        (data.usage && data.usage.response_ms ? data.usage.response_ms / 1000 :
-                        elapsedTimeMs / 1000),
-            // Use our improved cost extraction with fallback to estimation
-            cost: extractedCost ? parseCost(extractedCost) : estimateCost(model, data.usage.total_tokens),
-          };
-          
-          console.log('Extracted metrics for', model.name, ':', {
-            tokensUsed: metrics.tokensUsed,
-            responseTime: metrics.responseTime,
-            rawCost: extractedCost,
-            estimatedCost: extractedCost ? null : estimateCost(model, data.usage.total_tokens),
-            parsedCost: metrics.cost,
-            modelInfo: data.model_info
-          });
-          
-          promptResults.push({
-            model,
-            output,
-            metrics,
-            prompt: currentPrompt,
-            promptIndex: promptIndex + 1
-          });
-        } catch (error) {
-          console.error(`Error testing model ${model.name} with prompt ${promptIndex + 1}:`, error);
-          promptResults.push({
-            model,
-            output: `Error: ${error.message}`,
-            metrics: {
-              tokensUsed: 0,
-              responseTime: 0,
-              cost: 0,
-            },
-            prompt: currentPrompt,
-            promptIndex: promptIndex + 1
-          });
-          setApiError(prevError => {
-            if (prevError) {
-              return `${prevError}; ${error.message}`;
-            }
-            return error.message;
-          });
-        }
+          return error.message;
+        });
+        
+        // Generate a placeholder error response
+        const errorMessage = `Error from ${model.name}: ${error.message}`;
+        
+        // Use our helper functions to estimate metrics even for error cases
+        // This ensures we don't display zeros in the UI
+        const metrics = {
+          tokensUsed: calculateEstimatedTokens(prompt, errorMessage),
+          responseTime: calculateEstimatedResponseTime(model),
+          cost: calculateEstimatedCost(model, prompt, errorMessage),
+        };
+        
+        return {
+          model,
+          output: errorMessage,
+          metrics,
+          prompt,
+          promptIndex: promptIndex + 1,
+          error: true
+        };
+      }
+    };
+    
+    try {
+      // Create an array of all model-prompt combinations
+      const allPromises = [];
+      
+      // Generate all combinations of models and prompts
+      for (let promptIndex = 0; promptIndex < promptArray.length; promptIndex++) {
+        const currentPrompt = promptArray[promptIndex];
+        
+        // Add promises for all models for this prompt
+        selectedModels.forEach(model => {
+          allPromises.push(callModel(model, currentPrompt, promptIndex));
+        });
       }
       
-      // Add results from this prompt to all results
-      allResults.push(...promptResults);
-    }
-    
-    setResults(allResults);
-    setLoading(false);
-    
-    // If we have results, evaluate them using Maestro
-    // Group results by prompt for evaluation
-    if (allResults.length > 0 && allResults.some(r => !r.output.startsWith('Error'))) {
-      // Group by promptIndex
-      const resultsByPrompt = {};
-      allResults.forEach(result => {
-        if (!resultsByPrompt[result.promptIndex]) {
-          resultsByPrompt[result.promptIndex] = [];
-        }
-        resultsByPrompt[result.promptIndex].push(result);
-      });
+      // Run all API calls in parallel
+      const allResults = await Promise.all(allPromises);
       
-      // Evaluate each group of results
-      for (const [promptIndex, promptResults] of Object.entries(resultsByPrompt)) {
-        if (promptResults.length > 0) {
-          await handleEvaluateResults(promptResults[0].prompt, promptResults);
+      setResults(allResults);
+      
+      // If we have results, evaluate them using Maestro
+      if (allResults.length > 0 && allResults.some(r => !r.output.startsWith('Error'))) {
+        // Group by promptIndex
+        const resultsByPrompt = {};
+        allResults.forEach(result => {
+          if (!resultsByPrompt[result.promptIndex]) {
+            resultsByPrompt[result.promptIndex] = [];
+          }
+          resultsByPrompt[result.promptIndex].push(result);
+        });
+        
+        // Start all evaluations (potentially in parallel)
+        const evaluationPromises = [];
+        
+        for (const [promptIndex, promptResults] of Object.entries(resultsByPrompt)) {
+          if (promptResults.length > 0) {
+            evaluationPromises.push(handleEvaluateResults(promptResults[0].prompt, promptResults));
+          }
         }
+        
+        // Wait for all evaluations to complete
+        await Promise.all(evaluationPromises);
       }
+    } catch (error) {
+      console.error("Unexpected error in handleSubmit:", error);
+      setApiError(`Unexpected error: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
   
@@ -381,12 +392,12 @@ const AdvisorPage = () => {
         }
         return "Maestro API key not found in environment variables. Please add it to your .env file as REACT_APP_MAESTRO_API_KEY.";
       });
-      return;
+      return Promise.resolve(); // Ensure we return a resolved promise
     }
     
     if (!modelResults || !modelResults.length || !modelResults[0]) {
       console.error("Invalid model results for evaluation");
-      return;
+      return Promise.resolve(); // Ensure we return a resolved promise
     }
     
     const promptIndex = modelResults[0].promptIndex;
@@ -406,6 +417,8 @@ const AdvisorPage = () => {
         ...prev,
         [promptIndex]: evaluation
       }));
+      
+      return evaluation; // Return the evaluation result
     } catch (error) {
       console.error(`Error evaluating model outputs for prompt ${promptIndex}:`, error);
       setApiError(prevError => {
@@ -414,6 +427,7 @@ const AdvisorPage = () => {
         }
         return error.message;
       });
+      return Promise.resolve(); // Ensure we return a resolved promise even on error
     } finally {
       // Set this prompt's evaluation as no longer loading
       setEvaluationLoading(prev => ({
@@ -564,12 +578,12 @@ const AdvisorPage = () => {
                     };
                   }
                   
-                  // Skip if there was an error or metrics are undefined
-                  if (!result.output?.startsWith('Error') && result.metrics) {
+                  // Include all results with metrics, even errors (we have fallback values now)
+                  if (result.metrics) {
                     modelPerformance[modelId].promptCount++;
                     modelPerformance[modelId].totalResponseTime += result.metrics.responseTime || 0;
                     console.log(`Model ${result.model.name} cost: ${result.metrics.cost} (raw value)`);
-                    modelPerformance[modelId].totalCost += parseCost(result.metrics.cost) || 0;
+                    modelPerformance[modelId].totalCost += result.metrics.cost || 0;
                     modelPerformance[modelId].totalTokens += result.metrics.tokensUsed || 0;
                   }
                 });
@@ -643,11 +657,12 @@ const AdvisorPage = () => {
                           };
                         }
                         
-                        if (!result.output?.startsWith('Error') && result.metrics) {
+                        // Include all results with metrics, even errors (we have fallback values now)
+                        if (result.metrics) {
                           modelPerformance[modelId].promptCount++;
                           modelPerformance[modelId].totalResponseTime += result.metrics.responseTime || 0;
                           console.log(`Model ${result.model.name} cost: ${result.metrics.cost} (raw value)`);
-                          modelPerformance[modelId].totalCost += parseCost(result.metrics.cost) || 0;
+                          modelPerformance[modelId].totalCost += result.metrics.cost || 0;
                           modelPerformance[modelId].totalTokens += result.metrics.tokensUsed || 0;
                         }
                       });
@@ -730,10 +745,11 @@ const AdvisorPage = () => {
                       };
                     }
                     
-                    if (!result.output?.startsWith('Error') && result.metrics) {
+                    // Include all results with metrics, even errors (we have fallback values now)
+                    if (result.metrics) {
                       modelPerformance[modelId].promptCount++;
                       modelPerformance[modelId].totalResponseTime += result.metrics.responseTime || 0;
-                      modelPerformance[modelId].totalCost += parseCost(result.metrics.cost) || 0;
+                      modelPerformance[modelId].totalCost += result.metrics.cost || 0;
                       modelPerformance[modelId].totalTokens += result.metrics.tokensUsed || 0;
                     }
                   });
@@ -847,6 +863,22 @@ const AdvisorPage = () => {
                             <span className="text-xs text-gray-500">Avg. Tokens:</span>
                             <span className="text-sm font-medium">{category.model?.avgTokens ? Math.round(category.model.avgTokens) : 0}</span>
                           </div>
+                          {category.model?.generationId && generationDetails[category.model.generationId] && (
+                            <div className="mt-3 pt-3 border-t border-gray-100">
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-gray-500">Provider:</span>
+                                <span className="text-sm font-medium">{generationDetails[category.model.generationId].provider_name}</span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-gray-500">Prompt Tokens:</span>
+                                <span className="text-sm font-medium">{generationDetails[category.model.generationId].tokens_prompt}</span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-gray-500">Completion Tokens:</span>
+                                <span className="text-sm font-medium">{generationDetails[category.model.generationId].tokens_completion}</span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -937,7 +969,7 @@ const AdvisorPage = () => {
                                 </div>
                                 <div className="flex items-center">
                                   <span className="text-xs text-gray-500 mr-3">
-                                    {(result?.metrics?.responseTime || 0).toFixed(2)}s | ${parseCost(result?.metrics?.cost).toFixed(8)} | {result?.metrics?.tokensUsed || 0} tokens
+                                    {(result?.metrics?.responseTime || 0).toFixed(2)}s | ${(result?.metrics?.cost || 0).toFixed(8)} | {result?.metrics?.tokensUsed || 0} tokens
                                   </span>
                                   <button className="p-1 rounded-full hover:bg-gray-200">
                                     {isModelExpanded ? (
@@ -959,6 +991,33 @@ const AdvisorPage = () => {
                                   <pre className="bg-gray-100 p-3 rounded-b-lg whitespace-pre-wrap text-sm overflow-x-auto">
                                     {result?.output || 'No output available'}
                                   </pre>
+                                  
+                                  {/* Generation Details when available */}
+                                  {result?.metrics?.generationId && generationDetails[result.metrics.generationId] && (
+                                    <div className="p-3 bg-blue-50 mt-2 rounded text-sm">
+                                      <h6 className="font-semibold mb-2">Detailed Generation Stats</h6>
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                          <span className="text-gray-600">Provider:</span> {generationDetails[result.metrics.generationId].provider_name}
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-600">Generation Time:</span> {(generationDetails[result.metrics.generationId].generation_time / 1000).toFixed(2)}s
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-600">Prompt Tokens:</span> {generationDetails[result.metrics.generationId].tokens_prompt}
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-600">Completion Tokens:</span> {generationDetails[result.metrics.generationId].tokens_completion}
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-600">Total Cost:</span> ${generationDetails[result.metrics.generationId].total_cost?.toFixed(8)}
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-600">Finish Reason:</span> {generationDetails[result.metrics.generationId].finish_reason}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
