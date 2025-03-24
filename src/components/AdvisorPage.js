@@ -66,6 +66,7 @@ const AdvisorPage = () => {
   const [promptCount, setPromptCount] = useState(5);
   const [expandedPrompts, setExpandedPrompts] = useState({});
   const [expandedModels, setExpandedModels] = useState({});
+  const [generationDetails, setGenerationDetails] = useState({});
 
   // Toggle functions for expandable sections
   const togglePrompt = (promptIndex) => {
@@ -159,6 +160,34 @@ const AdvisorPage = () => {
     }
   };
   
+  // Fetch generation details from OpenRouter API
+  const fetchGenerationDetails = async (generationId) => {
+    if (!generationId || !OPENROUTER_API_KEY) return null;
+    
+    try {
+      console.log(`Fetching generation details for ID: ${generationId}`);
+      
+      const response = await fetch(`https://openrouter.ai/api/v1/generation?id=${generationId}`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Error fetching generation details: ${errorData.error?.message || 'Unknown error'}`);
+      }
+      
+      const data = await response.json();
+      return data.data;
+    } catch (error) {
+      console.error(`Error fetching generation details:`, error);
+      return null;
+    }
+  };
+
   // Handle form submission - test the selected models
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -181,6 +210,7 @@ const AdvisorPage = () => {
     setLoading(true);
     setResults([]);
     setEvaluationResults({});
+    setGenerationDetails({});
     setApiError("");
     
     // Split the prompt text into individual prompts
@@ -783,6 +813,22 @@ const AdvisorPage = () => {
                             <span className="text-xs text-gray-500">Avg. Tokens:</span>
                             <span className="text-sm font-medium">{category.model?.avgTokens ? Math.round(category.model.avgTokens) : 0}</span>
                           </div>
+                          {category.model?.generationId && generationDetails[category.model.generationId] && (
+                            <div className="mt-3 pt-3 border-t border-gray-100">
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-gray-500">Provider:</span>
+                                <span className="text-sm font-medium">{generationDetails[category.model.generationId].provider_name}</span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-gray-500">Prompt Tokens:</span>
+                                <span className="text-sm font-medium">{generationDetails[category.model.generationId].tokens_prompt}</span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-gray-500">Completion Tokens:</span>
+                                <span className="text-sm font-medium">{generationDetails[category.model.generationId].tokens_completion}</span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -895,6 +941,33 @@ const AdvisorPage = () => {
                                   <pre className="bg-gray-100 p-3 rounded-b-lg whitespace-pre-wrap text-sm overflow-x-auto">
                                     {result?.output || 'No output available'}
                                   </pre>
+                                  
+                                  {/* Generation Details when available */}
+                                  {result?.metrics?.generationId && generationDetails[result.metrics.generationId] && (
+                                    <div className="p-3 bg-blue-50 mt-2 rounded text-sm">
+                                      <h6 className="font-semibold mb-2">Detailed Generation Stats</h6>
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                          <span className="text-gray-600">Provider:</span> {generationDetails[result.metrics.generationId].provider_name}
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-600">Generation Time:</span> {(generationDetails[result.metrics.generationId].generation_time / 1000).toFixed(2)}s
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-600">Prompt Tokens:</span> {generationDetails[result.metrics.generationId].tokens_prompt}
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-600">Completion Tokens:</span> {generationDetails[result.metrics.generationId].tokens_completion}
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-600">Total Cost:</span> ${generationDetails[result.metrics.generationId].total_cost?.toFixed(8)}
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-600">Finish Reason:</span> {generationDetails[result.metrics.generationId].finish_reason}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
